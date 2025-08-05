@@ -1,0 +1,6 @@
+fn main() {
+	let val = "world!";
+	println("hello ", val);
+}
+
+fn println(s: str, val: str) {}
