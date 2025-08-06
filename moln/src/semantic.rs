@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use symbol_table::{BOOL_SYMBOL, F64_SYMBOL, I64_SYMBOL, STRING_SYMBOL, SymbolTable, ValueInfo};
 
 use crate::{
@@ -135,10 +137,10 @@ impl SemanticContext {
                 let body_type = self.scope(|scope| {
                     for param in &*function.parameters {
                         scope.table.define_value(
-                            *param.variable,
+                            *param.identifier,
                             ValueInfo {
-                                known_type: param.known_type.as_deref().cloned(),
-                                declaration_span: param.variable.span,
+                                known_type: Some((&*param.r#type).clone()),
+                                declaration_span: param.identifier.span,
                             },
                         )?;
                     }
@@ -159,16 +161,8 @@ impl SemanticContext {
                     parameters: function
                         .parameters
                         .iter()
-                        .map(|v| {
-                            v.known_type
-                                .as_ref()
-                                .ok_or_else(|| {
-                                    CompilerError::new("function parameters need to specify type")
-                                        .annotation(v.span, "missing type annotation here")
-                                })
-                                .map(|v| (**v).clone())
-                        })
-                        .collect::<CResult<Vec<_>>>()?,
+                        .map(|v| v.r#type.deref().clone())
+                        .collect::<Vec<_>>(),
                     return_type: Box::new((*function.return_type).clone()),
                 })
             }
@@ -475,16 +469,8 @@ impl SemanticContext {
         let parameters = func
             .parameters
             .iter()
-            .map(|a| {
-                a.known_type
-                    .as_ref()
-                    .ok_or_else(|| {
-                        CompilerError::new("missing type annotation")
-                            .annotation(a.span, "function arguments must have type annotations")
-                    })
-                    .map(|v| v.node.clone())
-            })
-            .collect::<CResult<Vec<_>>>()?;
+            .map(|a| a.r#type.deref().clone())
+            .collect::<Vec<_>>();
 
         self.table.define_value(
             *func.name,

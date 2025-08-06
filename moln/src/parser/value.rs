@@ -4,11 +4,12 @@ use crate::{
     error::CResult,
     lexer::{Token, TokenKind},
     parser::ast::{Block, Function, Map, Statement, VariableDeclaration, VariableDefinition},
+    symbol_interning::SymbolId,
 };
 
 use super::{
     CompilerError, Parser,
-    ast::{Spanned, Type, UNIT_TYPE},
+    ast::{FunctionParam, Spanned, Type, UNIT_TYPE},
 };
 
 impl<'src> Parser<'src> {
@@ -142,48 +143,43 @@ impl<'src> Parser<'src> {
 
     pub fn variable_definition(&mut self) -> Result<Spanned<VariableDefinition>, CompilerError> {
         self.spanned(|p| {
-            let ident_symbol = p.spanned(|p| match p.next_token() {
-                Token {
-                    kind: TokenKind::Identifier(symbol_id),
-                    ..
-                } => Ok(symbol_id),
-                t => return Err(CompilerError::unexpected_token(t, "expected identifier")),
-            })?;
-            // TODO support function/array/tuple etc. types here.
+            let ident_symbol = p.spanned(|p| p.identifier())?;
             let type_symbol = p
                 .next_token_if(|t| t == TokenKind::Colon)
                 .is_some()
-                .then(|| {
-                    p.spanned(|p| {
-                        Ok(match p.next_token() {
-                            Token {
-                                kind: TokenKind::Identifier(symbol_id),
-                                ..
-                            } => symbol_id,
-                            t => return Err(CompilerError::unexpected_token(t, "expected type")),
-                        })
-                    })
-                })
+                .then(|| p.spanned(|p| p.r#type()))
                 .transpose()?;
             Ok(VariableDefinition {
                 variable: ident_symbol,
-                known_type: type_symbol.map(|v| v.map(Type::Named)),
+                known_type: type_symbol,
             })
         })
     }
 
-    pub fn function(&mut self) -> Result<Function, CompilerError> {
-        self.expect(TokenKind::Fn)?;
-        let ident_symbol = self.spanned(|p| match p.next_token() {
+    pub fn identifier(&mut self) -> CResult<SymbolId> {
+        match self.next_token() {
             Token {
                 kind: TokenKind::Identifier(symbol_id),
                 ..
             } => Ok(symbol_id),
             t => return Err(CompilerError::unexpected_token(t, "expected identifier")),
-        })?;
-        let arguments = self.spanned(|p| {
+        }
+    }
+
+    pub fn function(&mut self) -> Result<Function, CompilerError> {
+        self.expect(TokenKind::Fn)?;
+        let ident_symbol = self.spanned(|p| p.identifier())?;
+        let parameters = self.spanned(|p| {
             p.sequence_of_enclosed_in(
-                |p| p.variable_definition(),
+                |p| {
+                    let parameter = p.spanned(|p| p.identifier())?;
+                    p.expect(TokenKind::Colon)?;
+                    let parameter_type = p.spanned(|p| p.r#type())?;
+                    Ok(FunctionParam {
+                        identifier: parameter,
+                        r#type: parameter_type,
+                    })
+                },
                 TokenKind::OpenParenth,
                 TokenKind::CloseParenth,
             )
@@ -192,16 +188,7 @@ impl<'src> Parser<'src> {
             Ok((p.peek_token_kind() != TokenKind::OpenCurlBrack)
                 .then(|| {
                     p.expect(TokenKind::ThinArrow)?;
-
-                    let symbol_id = match p.next_token() {
-                        Token {
-                            kind: TokenKind::Identifier(symbol_id),
-                            ..
-                        } => symbol_id,
-                        t => return Err(CompilerError::unexpected_token(t, "expected identifier")),
-                    };
-                    // TODO allow other type parameters than named types
-                    Ok(Type::Named(symbol_id))
+                    p.r#type()
                 })
                 .transpose()?
                 // zero-sized Type span is unit type
@@ -211,9 +198,69 @@ impl<'src> Parser<'src> {
         let body = self.block()?;
         Ok(Function {
             name: ident_symbol,
-            parameters: arguments,
+            parameters,
             body,
             return_type,
         })
+    }
+
+    pub fn r#type(&mut self) -> CResult<Type> {
+        match self.peek_token_kind() {
+            TokenKind::Identifier(symbol_id) => {
+                self.next_token();
+                Ok(Type::Named(symbol_id))
+            }
+            TokenKind::Fn => {
+                self.next_token();
+                let parameters = self.sequence_of_enclosed_in(
+                    |p| p.r#type(),
+                    TokenKind::OpenParenth,
+                    TokenKind::CloseParenth,
+                )?;
+                let return_type = (self.peek_token_kind() == TokenKind::ThinArrow)
+                    .then(|| {
+                        self.next_token();
+                        self.r#type()
+                    })
+                    .transpose()?
+                    .unwrap_or_else(|| UNIT_TYPE);
+                Ok(Type::Function {
+                    parameters,
+                    return_type: Box::new(return_type),
+                })
+            }
+            TokenKind::OpenSquareBrack => {
+                self.next_token();
+                let interior_type = self.r#type()?;
+                self.expect(TokenKind::SemiColon)?;
+                let len = self.next_token();
+                match len.kind {
+                    TokenKind::Integer(value) => {
+                        self.expect(TokenKind::CloseSquareBrack)?;
+                        Ok(Type::Array(Box::new(interior_type), value as usize))
+                    }
+                    _ => {
+                        return Err(CompilerError::unexpected_token(
+                            len,
+                            "array length must be an integer",
+                        ));
+                    }
+                }
+            }
+            TokenKind::OpenParenth => {
+                let parameters = self.sequence_of_enclosed_in(
+                    |p| p.r#type(),
+                    TokenKind::OpenParenth,
+                    TokenKind::CloseParenth,
+                )?;
+                Ok(Type::Tuple(parameters))
+            }
+            _ => {
+                return Err(CompilerError::unexpected_token(
+                    self.next_token(),
+                    "expected type",
+                ));
+            }
+        }
     }
 }

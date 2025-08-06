@@ -38,11 +38,11 @@ impl<'src> Parser<'src> {
     }
 
     pub fn is_at_eof(&mut self) -> bool {
-        self.tokens.is_at_eof()
+        self.tokens.peek().kind == TokenKind::EOF
     }
 
     fn peek_token_kind(&mut self) -> TokenKind {
-        self.tokens.peek_kind()
+        self.tokens.peek().kind
     }
 
     fn peek_nth_token(&mut self, i: usize) -> TokenKind {
@@ -57,15 +57,14 @@ impl<'src> Parser<'src> {
         self.tokens.next()
     }
 
-    /// Convenience method that returns a Spanned<T> struct. Might
-    /// be able to automatically wrap this using the context macro?
+    /// Convenience method to track spans of a parsed section.
     pub fn spanned<T, F>(&mut self, f: F) -> CResult<Spanned<T>>
     where
         F: FnOnce(&mut Self) -> CResult<T>,
     {
         let start = self.tokens.start_span();
         let result = f(self);
-        let end = self.tokens.end_span();
+        let end = self.tokens.end_span().max(start + 1);
         Ok(Spanned {
             node: result?,
             span: (start..end).into(),

@@ -1,12 +1,3 @@
-fn main() {
-	let val = "world!";
-	println("hello ", val);
-}
-
-fn println(s: str, val: str) {
-	
-}
-
 fn test_params(f: fn() -> i64, v: fn(str), t: (i64, str), u: [fn() -> fn(i64) -> i64; 5]) {
 	let r = f();
 	let test = r + 5;

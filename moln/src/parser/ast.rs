@@ -45,8 +45,6 @@ pub enum ExpressionKind {
     FunctionDefinition(Function),
     Map(Map),
     List(Vec<Expression>),
-    // tuple with one value = parentheses
-    // tuple with 0 values = unit value
     Tuple(Vec<Expression>),
 
     // --- Block --------
@@ -137,9 +135,15 @@ pub struct VariableDeclaration {
 #[derive(Debug, Clone)]
 pub struct Function {
     pub name: Spanned<SymbolId>,
-    pub parameters: Spanned<Vec<Spanned<VariableDefinition>>>,
+    pub parameters: Spanned<Vec<FunctionParam>>,
     pub return_type: Spanned<Type>,
     pub body: Spanned<Block>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FunctionParam {
+    pub identifier: Spanned<SymbolId>,
+    pub r#type: Spanned<Type>,
 }
 
 #[derive(Debug, Clone)]

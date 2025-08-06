@@ -22,11 +22,6 @@ impl<'src> TokenStream<'src> {
         self.tokens.peek().expect("should be infinite")
     }
 
-    /// Peek at the kind of the next token
-    pub fn peek_kind(&mut self) -> TokenKind {
-        self.peek().kind
-    }
-
     /// Peek at the nth token ahead (0 = next token)
     pub fn peek_nth(&mut self, n: usize) -> TokenKind {
         self.tokens
@@ -57,10 +52,5 @@ impl<'src> TokenStream<'src> {
     /// Get the end position for a span (end of last consumed token)
     pub fn end_span(&self) -> usize {
         self.last_consumed.map(|t| t.span.end).unwrap_or(0)
-    }
-
-    /// Check if we're at EOF
-    pub fn is_at_eof(&mut self) -> bool {
-        self.peek_kind() == TokenKind::EOF
     }
 }
