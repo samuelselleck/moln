@@ -40,12 +40,14 @@ pub enum ExpressionKind {
     Int(i64),
     String(SymbolId),
     Boolean(bool),
+    // the unit value
+    Unit,
 
     // --- Complex types ---
     FunctionDefinition(Function),
-    Map(Map),
+    Variant(Variant),
     List(Vec<Expression>),
-    Tuple(Vec<Expression>),
+    Parenthesis(Box<Expression>),
 
     // --- Block --------
     Block(Block),
@@ -69,8 +71,6 @@ pub enum ExpressionKind {
     },
 }
 
-pub const UNIT_TYPE: Type = Type::Tuple(vec![]);
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum Type {
     Named(SymbolId),
@@ -80,9 +80,27 @@ pub enum Type {
         return_type: Box<Type>,
     },
     Array(Box<Type>, usize),
-    // tuple with no elems is the unit value
-    Tuple(Vec<Type>),
+    SumType(Vec<VariantDefinition>),
+    Unit,
 }
+
+impl Type {
+    pub fn f64() -> Self {
+        Self::Named(SymbolId::from_str("f64"))
+    }
+    pub fn i64() -> Self {
+        Self::Named(SymbolId::from_str("i64"))
+    }
+    pub fn bool() -> Self {
+        Self::Named(SymbolId::from_str("bool"))
+    }
+    pub fn str() -> Self {
+        Self::Named(SymbolId::from_str("str"))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariantDefinition(pub SymbolId, pub Vec<(SymbolId, Type)>);
 
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -106,16 +124,24 @@ impl Display for Type {
             Type::Array(t, len) => {
                 write!(f, "[{};{}]", t, len)
             }
-            Type::Tuple(elems) => {
-                write!(f, "(")?;
-                if let Some((last, most)) = elems.split_last() {
-                    for p in most {
-                        write!(f, "{}, ", p)?;
+            Type::SumType(variants) => {
+                for variant in variants {
+                    let VariantDefinition(name, fields) = variant;
+                    write!(f, "'{}{{", name)?;
+                    if let Some(((s, t), most)) = fields.split_last() {
+                        for (s, t) in most {
+                            write!(f, "{}: {}, ", s, t)?;
+                        }
+                        write!(f, "{}: {}", s, t)?;
                     }
-                    write!(f, "{}", last)?;
+                    write!(f, "}}")?;
+                    if variants.last() != Some(variant) {
+                        write!(f, " | ")?
+                    }
                 }
-                write!(f, ")")
+                Ok(())
             }
+            Type::Unit => write!(f, "()"),
         }
     }
 }
@@ -166,7 +192,7 @@ pub struct Conditional {
 }
 
 #[derive(Debug, Clone)]
-pub struct Map(pub Vec<(SymbolId, Expression)>);
+pub struct Variant(pub SymbolId, pub Vec<(SymbolId, Expression)>);
 
 #[derive(Debug, Clone)]
 pub struct Call {
@@ -184,7 +210,7 @@ pub enum Op {
 pub enum UnaryPostfixOp {
     // function call
     Call(Call),
-    FieldAccess(Vec<SymbolId>),
+    FieldAccess(SymbolId),
 }
 
 #[derive(Debug, Clone, Copy)]

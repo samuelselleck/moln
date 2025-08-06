@@ -3,45 +3,16 @@ use moln_macros::token_context;
 use crate::{
     error::CResult,
     lexer::{Token, TokenKind},
-    parser::ast::{Block, Function, Map, Statement, VariableDeclaration, VariableDefinition},
+    parser::ast::{Block, Function, Statement, VariableDeclaration, VariableDefinition, Variant},
     symbol_interning::SymbolId,
 };
 
 use super::{
     CompilerError, Parser,
-    ast::{FunctionParam, Spanned, Type, UNIT_TYPE},
+    ast::{FunctionParam, Spanned, Type, VariantDefinition},
 };
 
 impl<'src> Parser<'src> {
-    // this function is used to peek forward far enough to be sure that the next
-    // ast node is a map. This is needed to dissambiguate from a block { .. }.
-    // This function is by far the place with the largest amount of lookahead
-    pub fn is_map_next(&mut self) -> bool {
-        let mut lookahead = 0;
-        // expect a open curly bracket
-        if self.peek_nth_token(lookahead) != TokenKind::OpenCurlBrack {
-            return false;
-        }
-        lookahead += 1;
-        // skip an unknown ammount of legal comment blocks.
-        // this isn't great since it's technically an arbitrary ammount
-        // of lookahead, but  should very very seldom be more than 3 or 4 or so
-        while self.peek_nth_token(lookahead) == TokenKind::Comment {
-            lookahead += 1;
-        }
-        // expect an identifier
-        if !matches!(self.peek_nth_token(lookahead), TokenKind::Identifier(_)) {
-            return false;
-        }
-        lookahead += 1;
-        // then a colon
-        if self.peek_nth_token(lookahead) != TokenKind::Colon {
-            return false;
-        }
-        // now we are sure, this must be a map
-        return true;
-    }
-
     pub fn block(&mut self) -> Result<Spanned<Block>, CompilerError> {
         self.spanned(|p| {
             p.expect(TokenKind::OpenCurlBrack)?;
@@ -84,8 +55,13 @@ impl<'src> Parser<'src> {
     }
 
     #[token_context("Map ({foo: .. bar: ..})")]
-    pub fn map(&mut self) -> CResult<Spanned<Map>> {
+    pub fn variant(&mut self) -> CResult<Spanned<Variant>> {
         self.spanned(|p| {
+            p.expect(TokenKind::Tick)?;
+            let name = matches!(p.peek_token_kind(), TokenKind::Identifier(_))
+                .then(|| p.identifier())
+                .transpose()?
+                .unwrap_or_else(|| SymbolId::from_str(""));
             p.expect(TokenKind::OpenCurlBrack)?;
             let mut entries = vec![];
             loop {
@@ -114,7 +90,7 @@ impl<'src> Parser<'src> {
                     }
                 });
             }
-            Ok(Map(entries))
+            Ok(Variant(name, entries))
         })
     }
 
@@ -192,7 +168,7 @@ impl<'src> Parser<'src> {
                 })
                 .transpose()?
                 // zero-sized Type span is unit type
-                .unwrap_or_else(|| UNIT_TYPE))
+                .unwrap_or_else(|| Type::Unit))
         })?;
 
         let body = self.block()?;
@@ -223,7 +199,7 @@ impl<'src> Parser<'src> {
                         self.r#type()
                     })
                     .transpose()?
-                    .unwrap_or_else(|| UNIT_TYPE);
+                    .unwrap_or_else(|| Type::Unit);
                 Ok(Type::Function {
                     parameters,
                     return_type: Box::new(return_type),
@@ -247,13 +223,30 @@ impl<'src> Parser<'src> {
                     }
                 }
             }
-            TokenKind::OpenParenth => {
-                let parameters = self.sequence_of_enclosed_in(
-                    |p| p.r#type(),
-                    TokenKind::OpenParenth,
-                    TokenKind::CloseParenth,
-                )?;
-                Ok(Type::Tuple(parameters))
+            TokenKind::Tick => {
+                let mut variants = vec![];
+                loop {
+                    self.expect(TokenKind::Tick)?;
+                    let name = matches!(self.peek_token_kind(), TokenKind::Identifier(_))
+                        .then(|| self.identifier())
+                        .transpose()?
+                        .unwrap_or_else(|| SymbolId::from_str(""));
+                    let fields = self.sequence_of_enclosed_in(
+                        |p| {
+                            let field = p.identifier()?;
+                            p.expect(TokenKind::Colon)?;
+                            let field_type = p.r#type()?;
+                            Ok((field, field_type))
+                        },
+                        TokenKind::OpenCurlBrack,
+                        TokenKind::CloseCurlBrack,
+                    )?;
+                    variants.push(VariantDefinition(name, fields));
+                    if self.next_token_if(|t| t == TokenKind::VertLine).is_none() {
+                        break;
+                    }
+                }
+                Ok(Type::SumType(variants))
             }
             _ => {
                 return Err(CompilerError::unexpected_token(

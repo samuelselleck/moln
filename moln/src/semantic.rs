@@ -1,12 +1,12 @@
 use std::ops::Deref;
 
-use symbol_table::{BOOL_SYMBOL, F64_SYMBOL, I64_SYMBOL, STRING_SYMBOL, SymbolTable, ValueInfo};
+use symbol_table::{SymbolTable, ValueInfo};
 
 use crate::{
     error::{CResult, CompilerError},
     parser::ast::{
-        Ast, BinaryOp, Block, Expression, ExpressionKind, Function, Statement, Type, UNIT_TYPE,
-        UnaryPostfixOp, UnaryPrefixOp, VariableDeclaration,
+        Ast, BinaryOp, Block, Expression, ExpressionKind, Function, Statement, Type,
+        UnaryPostfixOp, UnaryPrefixOp, VariableDeclaration, Variant, VariantDefinition,
     },
     symbol_interning::SymbolId,
 };
@@ -59,10 +59,11 @@ impl SemanticContext {
                     | ExpressionKind::Int(_)
                     | ExpressionKind::String(_)
                     | ExpressionKind::Boolean(_)
-                    | ExpressionKind::Map(_)
+                    | ExpressionKind::Variant(_)
                     | ExpressionKind::List(_)
-                    | ExpressionKind::Tuple(_)
+                    | ExpressionKind::Unit
                     | ExpressionKind::Block(_)
+                    | ExpressionKind::Parenthesis(_)
                     | ExpressionKind::Conditional(_)
                     | ExpressionKind::UnaryPrefix { .. }
                     | ExpressionKind::UnaryPostfix { .. }
@@ -71,7 +72,7 @@ impl SemanticContext {
             }
         }
 
-        let mut last_type = UNIT_TYPE;
+        let mut last_type = Type::Unit;
         for node in &block.statements {
             match node {
                 Statement::Expression(expr) => {
@@ -104,13 +105,13 @@ impl SemanticContext {
                             declaration_span: symbol.span,
                         },
                     )?;
-                    last_type = UNIT_TYPE;
+                    last_type = Type::Unit;
                 }
             }
         }
 
         if block.unit_return {
-            last_type = UNIT_TYPE;
+            last_type = Type::Unit;
         }
 
         Ok(last_type)
@@ -129,10 +130,10 @@ impl SemanticContext {
                         .annotation(expr.span, "type must be known here")
                 })
             }
-            ExpressionKind::Float(_) => Ok(Type::Named(SymbolId::from_str(F64_SYMBOL))),
-            ExpressionKind::Int(_) => Ok(Type::Named(SymbolId::from_str(I64_SYMBOL))),
-            ExpressionKind::String(_) => Ok(Type::Named(SymbolId::from_str(STRING_SYMBOL))),
-            ExpressionKind::Boolean(_) => Ok(Type::Named(SymbolId::from_str(BOOL_SYMBOL))),
+            ExpressionKind::Float(_) => Ok(Type::f64()),
+            ExpressionKind::Int(_) => Ok(Type::i64()),
+            ExpressionKind::String(_) => Ok(Type::str()),
+            ExpressionKind::Boolean(_) => Ok(Type::bool()),
             ExpressionKind::FunctionDefinition(function) => {
                 let body_type = self.scope(|scope| {
                     for param in &*function.parameters {
@@ -166,8 +167,15 @@ impl SemanticContext {
                     return_type: Box::new((*function.return_type).clone()),
                 })
             }
-            // TODO do I event want maps? are these "static" maps? (keys can't change after init)
-            ExpressionKind::Map(_) => Ok(UNIT_TYPE),
+            ExpressionKind::Variant(Variant(name, fields)) => {
+                Ok(Type::SumType(Vec::from_iter([VariantDefinition(
+                    *name,
+                    fields
+                        .iter()
+                        .map(|(k, v)| Ok((*k, self.check_expression(v)?)))
+                        .collect::<CResult<Vec<_>>>()?,
+                )])))
+            }
             ExpressionKind::List(elems) => {
                 let expr_types = elems
                     .iter()
@@ -188,23 +196,12 @@ impl SemanticContext {
                 })?;
                 Ok(Type::Array(Box::new(known_type.clone()), elems.len()))
             }
-            ExpressionKind::Tuple(elems) => Ok({
-                // single element tuples are treated as values! (just a parenthesized value)
-                if elems.len() == 1 {
-                    self.check_expression(elems.into_iter().next().unwrap())?
-                } else {
-                    Type::Tuple(
-                        elems
-                            .iter()
-                            .map(|e| self.check_expression(e))
-                            .collect::<CResult<Vec<_>>>()?,
-                    )
-                }
-            }),
+            ExpressionKind::Parenthesis(expr) => self.check_expression(expr),
+            ExpressionKind::Unit => Ok(Type::Unit),
             ExpressionKind::Block(block) => self.scope(|scope| scope.check_block(block)),
             ExpressionKind::Conditional(conditional) => {
                 let cond_type = self.check_expression(&conditional.condition)?;
-                if Type::Named(SymbolId::from_str(BOOL_SYMBOL)) != cond_type {
+                if Type::bool() != cond_type {
                     return Err(CompilerError::new("expected bool").annotation(
                         conditional.condition.span,
                         format!("expected boolean, found {}", cond_type),
@@ -214,7 +211,7 @@ impl SemanticContext {
                 let fail_type = if let Some(fail) = &conditional.fail {
                     self.scope(|scope| scope.check_block(&fail))?
                 } else {
-                    UNIT_TYPE
+                    Type::Unit
                 };
                 if pass_type != fail_type {
                     return Err(CompilerError::new("type missmatch").annotation(
@@ -233,9 +230,7 @@ impl SemanticContext {
                     let expr_type = self.check_expression(val)?;
                     // TODO make negation work on anything implementing the "Neg" trait!
                     // TODO make nicer way to construct/compare builtins
-                    if expr_type != Type::Named(SymbolId::from_str(I64_SYMBOL))
-                        && expr_type != Type::Named(SymbolId::from_str(F64_SYMBOL))
-                    {
+                    if expr_type != Type::i64() && expr_type != Type::f64() {
                         return Err(CompilerError::new("can't negate non-numeric type")
                             .annotation(val.span, format!("has type {}", expr_type)));
                     }
@@ -244,7 +239,7 @@ impl SemanticContext {
                 UnaryPrefixOp::Not => {
                     let expr_type = self.check_expression(val)?;
                     // TODO make negation work on anything implementing the "Not" trait!
-                    if expr_type != Type::Named(SymbolId::from_str(BOOL_SYMBOL)) {
+                    if expr_type != Type::bool() {
                         return Err(CompilerError::new("can't not non-bool type")
                             .annotation(val.span, format!("has type {}", expr_type)));
                     }
@@ -311,11 +306,32 @@ impl SemanticContext {
                                 ));
                         }
                     }
-                    UnaryPostfixOp::FieldAccess(vec) => {
-                        // TODO verify expr_type is a struct or other type
-                        // with associated variables/functions, and return
-                        // the "inner" type
-                        Ok(UNIT_TYPE)
+                    UnaryPostfixOp::FieldAccess(field) => {
+                        Ok(if let Type::SumType(variants) = &expr_type {
+                            if variants.len() != 1 {
+                                return Err(CompilerError::new("can't access fields on sumtype with more than one possible variant").annotation(expr.span, format!("type of this expression is {}", expr_type)).annotation(op.span, "tried to access here"));
+                            }
+                            let VariantDefinition(_, fields) = &variants[0];
+                            fields
+                                .iter()
+                                .find_map(|(f, t)| (f == field).then_some(t))
+                                .ok_or_else(|| {
+                                    CompilerError::new("no such field").annotation(
+                                        expr.span,
+                                        format!("this expression is of type {}", expr_type),
+                                    )
+                                })?
+                                .clone()
+                        } else {
+                            return Err(CompilerError::new(
+                                "can't access field on non-struct type",
+                            )
+                            .annotation(
+                                expr.span,
+                                format!("this expression has type {}", expr_type),
+                            )
+                            .annotation(op.span, format!("tried to access field {}", field)));
+                        })
                     }
                 }
             }
@@ -331,18 +347,14 @@ impl SemanticContext {
                     | BinaryOp::Div
                     | BinaryOp::Mod
                     | BinaryOp::Exp => {
-                        // Check that both operands are numeric
-                        let i64_type = Type::Named(SymbolId::from_str(I64_SYMBOL));
-                        let f64_type = Type::Named(SymbolId::from_str(F64_SYMBOL));
-
-                        if left_type != i64_type && left_type != f64_type {
+                        if left_type != Type::i64() && left_type != Type::f64() {
                             return Err(CompilerError::new("expected numeric type").annotation(
                                 left.span,
                                 format!("type of left operand is {}", left_type),
                             ));
                         }
 
-                        if right_type != i64_type && right_type != f64_type {
+                        if right_type != Type::i64() && right_type != Type::f64() {
                             return Err(CompilerError::new("expected numeric type").annotation(
                                 right.span,
                                 format!("type of right operand is {}", right_type),
@@ -384,28 +396,26 @@ impl SemanticContext {
                                 ));
                         }
 
-                        Ok(Type::Named(SymbolId::from_str(BOOL_SYMBOL)))
+                        Ok(Type::bool())
                     }
 
                     // Logical operators - require bool operands, return bool
                     BinaryOp::Or | BinaryOp::And => {
-                        let bool_type = Type::Named(SymbolId::from_str(BOOL_SYMBOL));
-
-                        if left_type != bool_type {
+                        if left_type != Type::bool() {
                             return Err(CompilerError::new("expected boolean type").annotation(
                                 left.span,
                                 format!("left operand has type {}", left_type),
                             ));
                         }
 
-                        if right_type != bool_type {
+                        if right_type != Type::bool() {
                             return Err(CompilerError::new("expected boolean type").annotation(
                                 right.span,
                                 format!("right operand has type {}", right_type),
                             ));
                         }
 
-                        Ok(bool_type)
+                        Ok(Type::bool())
                     }
 
                     // Assignment operator - special case, returns unit
@@ -439,13 +449,13 @@ impl SemanticContext {
                                 .annotation(left.span, "can only assign to variables for now"));
                         }
 
-                        Ok(UNIT_TYPE)
+                        Ok(Type::Unit)
                     }
 
                     // Range operator - for now just return unit, could return a range type later
                     BinaryOp::Range => {
                         // Both operands should be integers
-                        let i64_type = Type::Named(SymbolId::from_str(I64_SYMBOL));
+                        let i64_type = Type::i64();
 
                         if left_type != i64_type {
                             return Err(CompilerError::new("range start must be an integer")
@@ -458,7 +468,7 @@ impl SemanticContext {
                         }
 
                         // TODO: return a proper Range type when implemented
-                        Ok(UNIT_TYPE)
+                        Ok(Type::Unit)
                     }
                 }
             }

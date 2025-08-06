@@ -66,6 +66,7 @@ impl<'src> Iterator for TokenIterator<'src> {
             '!' => self.one_or_two_if_with(TokenKind::Not, '=', TokenKind::NotEq),
             '|' => self.one_or_two_if_with(TokenKind::VertLine, '|', TokenKind::Or),
             '&' => self.one_or_two_if_with(TokenKind::Ampersand, '&', TokenKind::And),
+            '\'' => self.single(TokenKind::Tick),
             c => {
                 eprintln!("unknown token: {:?}", c);
                 self.single(TokenKind::Unknown)

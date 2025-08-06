@@ -1,6 +1,7 @@
 use crate::{
     lexer::{Token, TokenKind},
     parser::ast::{BinaryOp, Call, Conditional, Op, UnaryPostfixOp, UnaryPrefixOp},
+    symbol_interning::SymbolId,
 };
 
 use super::{
@@ -39,13 +40,8 @@ impl<'src> Parser<'src> {
                 span: self.next_token().span,
                 node: ExpressionKind::Boolean(false),
             },
-            TokenKind::OpenCurlBrack => {
-                if self.is_map_next() {
-                    self.map()?.map(ExpressionKind::Map)
-                } else {
-                    self.block()?.map(ExpressionKind::Block)
-                }
-            }
+            TokenKind::Tick => self.variant()?.map(ExpressionKind::Variant),
+            TokenKind::OpenCurlBrack => self.block()?.map(ExpressionKind::Block),
             TokenKind::If => {
                 self.spanned(|p| {
                     //test
@@ -76,12 +72,16 @@ impl<'src> Parser<'src> {
                 .map(ExpressionKind::List)
             })?,
             TokenKind::OpenParenth => self.spanned(|p| {
-                p.sequence_of_enclosed_in(
-                    |p| p.expression(),
-                    TokenKind::OpenParenth,
-                    TokenKind::CloseParenth,
+                p.next_token();
+                Ok(
+                    if p.next_token_if(|t| t == TokenKind::CloseParenth).is_some() {
+                        ExpressionKind::Unit
+                    } else {
+                        let expr = p.expression()?;
+                        p.expect(TokenKind::CloseParenth)?;
+                        ExpressionKind::Parenthesis(Box::new(expr))
+                    },
                 )
-                .map(ExpressionKind::Tuple)
             })?,
             TokenKind::Not => {
                 let ((), rbp) = prefix_binding_power(&UnaryPrefixOp::Not);
@@ -128,7 +128,9 @@ impl<'src> Parser<'src> {
                 TokenKind::OpenParenth => {
                     Op::Postfix(UnaryPostfixOp::Call(Call { arguments: vec![] }))
                 }
-                TokenKind::Period => Op::Postfix(UnaryPostfixOp::FieldAccess(Vec::new())),
+                TokenKind::Period => {
+                    Op::Postfix(UnaryPostfixOp::FieldAccess(SymbolId::from_str("")))
+                }
 
                 // binary operators
                 TokenKind::Assign => Op::Binary(BinaryOp::Assign),
@@ -202,7 +204,7 @@ impl<'src> Parser<'src> {
                                         ));
                                     }
                                 };
-                                identifiers.push(ident_symbol)
+                                *identifiers = ident_symbol;
                             }
                         }
                         Ok(op)

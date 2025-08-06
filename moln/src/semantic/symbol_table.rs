@@ -17,17 +17,16 @@ struct Scope {
     pub types: HashMap<SymbolId, TypeDefinition>,
 }
 
+pub enum TypeDefinition {
+    Type(Type),
+    Primitive,
+}
+
 #[derive(Clone)]
 pub struct ValueInfo {
     // type inference fills this in if possible.
     pub known_type: Option<Type>,
     pub declaration_span: Span,
-}
-
-pub enum TypeDefinition {
-    //TODO add enums etc.
-    Struct { span: Span },
-    Primitive,
 }
 
 impl Scope {
@@ -44,33 +43,27 @@ pub struct SymbolTable {
     scope_stack: Vec<ScopeId>,
 }
 
-pub const I64_SYMBOL: &'static str = "i64";
-pub const F64_SYMBOL: &'static str = "f64";
-pub const BOOL_SYMBOL: &'static str = "bool";
-pub const STRING_SYMBOL: &'static str = "str";
-
 impl SymbolTable {
     pub fn new() -> Self {
-        let mut table = Self {
+        let mut root_scope = Scope::new();
+        root_scope
+            .types
+            .insert(SymbolId::from_str("i64"), TypeDefinition::Primitive);
+        root_scope
+            .types
+            .insert(SymbolId::from_str("f64"), TypeDefinition::Primitive);
+        root_scope
+            .types
+            .insert(SymbolId::from_str("bool"), TypeDefinition::Primitive);
+        root_scope
+            .types
+            .insert(SymbolId::from_str("str"), TypeDefinition::Primitive);
+
+        Self {
             // builtin global scope
-            scopes: Vec::from_iter([Scope::new()]),
+            scopes: Vec::from_iter([root_scope]),
             scope_stack: Vec::from_iter([ScopeId(0)]),
-        };
-
-        table
-            .define_type(SymbolId::from_str(I64_SYMBOL), TypeDefinition::Primitive)
-            .unwrap();
-        table
-            .define_type(SymbolId::from_str(F64_SYMBOL), TypeDefinition::Primitive)
-            .unwrap();
-        table
-            .define_type(SymbolId::from_str(BOOL_SYMBOL), TypeDefinition::Primitive)
-            .unwrap();
-        table
-            .define_type(SymbolId::from_str(STRING_SYMBOL), TypeDefinition::Primitive)
-            .unwrap();
-
-        table
+        }
     }
 
     pub fn resolve_value_mut(&mut self, id: &SymbolId) -> Option<&mut ValueInfo> {
@@ -121,10 +114,13 @@ impl SymbolTable {
         Ok(())
     }
 
-    pub fn define_type(&mut self, id: SymbolId, initial_info: TypeDefinition) -> CResult<()> {
+    pub fn define_type(&mut self, id: SymbolId, initial_info: Type) -> CResult<()> {
         let current_scope_id = self.scope_stack.last().expect("no active scope");
         let scope_symbols = &mut self.scopes[current_scope_id.0].types;
-        if scope_symbols.insert(id.clone(), initial_info).is_some() {
+        if scope_symbols
+            .insert(id.clone(), TypeDefinition::Type(initial_info))
+            .is_some()
+        {
             // TODO make multiple symbols in same scope be OK?
             return Err(CompilerError::new("type already exists in this scope"));
         }
