@@ -40,6 +40,9 @@ impl<'src> Parser<'src> {
                 span: self.next_token().span,
                 node: ExpressionKind::Boolean(false),
             },
+            TokenKind::Type => self
+                .type_definition()?
+                .map(|(s, t)| ExpressionKind::TypeDefinition(s, t)),
             TokenKind::Tick => self.variant()?.map(ExpressionKind::Variant),
             TokenKind::OpenCurlBrack => self.block()?.map(ExpressionKind::Block),
             TokenKind::If => {
@@ -60,9 +63,7 @@ impl<'src> Parser<'src> {
                     }))
                 })?
             }
-            TokenKind::Fn => {
-                self.spanned(|p| p.function().map(ExpressionKind::FunctionDefinition))?
-            }
+            TokenKind::Fn => self.function()?.map(ExpressionKind::FunctionDefinition),
             TokenKind::OpenSquareBrack => self.spanned(|p| {
                 p.sequence_of_enclosed_in(
                     |p| p.expression(),
@@ -192,19 +193,7 @@ impl<'src> Parser<'src> {
                             }
                             UnaryPostfixOp::FieldAccess(identifiers) => {
                                 p.expect(TokenKind::Period)?;
-                                let ident_symbol = match p.next_token() {
-                                    Token {
-                                        kind: TokenKind::Identifier(symbol_id),
-                                        ..
-                                    } => symbol_id,
-                                    t => {
-                                        return Err(CompilerError::unexpected_token(
-                                            t,
-                                            "expected identifier",
-                                        ));
-                                    }
-                                };
-                                *identifiers = ident_symbol;
+                                *identifiers = p.identifier()?;
                             }
                         }
                         Ok(op)

@@ -4,7 +4,13 @@ use crate::{lexer::Span, symbol_interning::SymbolId};
 
 #[derive(Debug)]
 pub struct Ast {
-    pub elems: Vec<Spanned<Function>>,
+    pub elems: Vec<Spanned<RootStatement>>,
+}
+
+#[derive(Debug)]
+pub enum RootStatement {
+    Function(Function),
+    Type(SymbolId, Type),
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +51,7 @@ pub enum ExpressionKind {
 
     // --- Complex types ---
     FunctionDefinition(Function),
+    TypeDefinition(SymbolId, Type),
     Variant(Variant),
     List(Vec<Expression>),
     Parenthesis(Box<Expression>),

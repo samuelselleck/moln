@@ -1,4 +1,4 @@
-use ast::{Ast, Spanned};
+use ast::{Ast, RootStatement, Spanned};
 
 use crate::error::{CResult, CompilerError};
 use crate::lexer::{Token, TokenKind};
@@ -25,14 +25,20 @@ impl<'src> Parser<'src> {
 
     pub fn vadermoln(&mut self) -> CResult<Ast> {
         let mut elems = vec![];
-        while !(self.peek_token_kind() == TokenKind::CloseCurlBrack || self.is_at_eof()) {
-            let expr = self.spanned(|p| p.function())?;
-            elems.push(expr);
-            self.next_token_if(|v| v == TokenKind::SemiColon);
-        }
-        if !self.is_at_eof() {
-            return Err(CompilerError::new("expected EOF")
-                .annotation(self.next_token().span, "expected end of file here"));
+        while !self.is_at_eof() {
+            let elem = match self.peek_token_kind() {
+                TokenKind::Fn => self.function()?.map(RootStatement::Function),
+                TokenKind::Type => self
+                    .type_definition()?
+                    .map(|(s, t)| RootStatement::Type(s, t)),
+                _ => {
+                    return Err(CompilerError::unexpected_token(
+                        self.next_token(),
+                        "expected top level type",
+                    ));
+                }
+            };
+            elems.push(elem);
         }
         Ok(Ast { elems })
     }

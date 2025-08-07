@@ -7,7 +7,25 @@ fn println(s: str, val: str) {
 	
 }
 
-fn test_params(f: fn() -> i64, v: fn(str), t: 'Student{ v: i64, u: str} | 'Teacher{ some: str }, u: [fn() -> fn(i64) -> i64; 5]) {
-	let r = f();
+type SomeOther =
+'Cookies{
+	number: i64
+} |
+'Fruits{
+    kinds: i64,
+	bowl: str
+} |
+'EmptyTray{}
+
+
+fn test_params(
+	a: fn() -> i64,
+	v: SomeOther,
+	b: 'Student{ v: i64, u: str } | 'Teacher{ some: str },
+	c: [fn() -> fn(i64) -> i64; 5],
+	d: '{ someval: fn(str) }
+) {
+	let r = a();
 	let test = r + 5;
+	d.someval("hello")
 }

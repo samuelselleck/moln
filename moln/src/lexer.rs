@@ -128,6 +128,7 @@ impl<'src> TokenIterator<'src> {
             "let" => TokenKind::Let,
             "true" => TokenKind::True,
             "false" => TokenKind::False,
+            "type" => TokenKind::Type,
             ident => TokenKind::Identifier(SymbolId::from_str(ident)),
         };
         return Token {

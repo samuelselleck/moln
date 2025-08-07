@@ -142,41 +142,53 @@ impl<'src> Parser<'src> {
         }
     }
 
-    pub fn function(&mut self) -> Result<Function, CompilerError> {
-        self.expect(TokenKind::Fn)?;
-        let ident_symbol = self.spanned(|p| p.identifier())?;
-        let parameters = self.spanned(|p| {
-            p.sequence_of_enclosed_in(
-                |p| {
-                    let parameter = p.spanned(|p| p.identifier())?;
-                    p.expect(TokenKind::Colon)?;
-                    let parameter_type = p.spanned(|p| p.r#type())?;
-                    Ok(FunctionParam {
-                        identifier: parameter,
-                        r#type: parameter_type,
+    pub fn function(&mut self) -> Result<Spanned<Function>, CompilerError> {
+        self.spanned(|p| {
+            p.expect(TokenKind::Fn)?;
+            let ident_symbol = p.spanned(|p| p.identifier())?;
+            let parameters = p.spanned(|p| {
+                p.sequence_of_enclosed_in(
+                    |p| {
+                        let parameter = p.spanned(|p| p.identifier())?;
+                        p.expect(TokenKind::Colon)?;
+                        let parameter_type = p.spanned(|p| p.r#type())?;
+                        Ok(FunctionParam {
+                            identifier: parameter,
+                            r#type: parameter_type,
+                        })
+                    },
+                    TokenKind::OpenParenth,
+                    TokenKind::CloseParenth,
+                )
+            })?;
+            let return_type = p.spanned(|p| {
+                Ok((p.peek_token_kind() != TokenKind::OpenCurlBrack)
+                    .then(|| {
+                        p.expect(TokenKind::ThinArrow)?;
+                        p.r#type()
                     })
-                },
-                TokenKind::OpenParenth,
-                TokenKind::CloseParenth,
-            )
-        })?;
-        let return_type = self.spanned(|p| {
-            Ok((p.peek_token_kind() != TokenKind::OpenCurlBrack)
-                .then(|| {
-                    p.expect(TokenKind::ThinArrow)?;
-                    p.r#type()
-                })
-                .transpose()?
-                // zero-sized Type span is unit type
-                .unwrap_or_else(|| Type::Unit))
-        })?;
+                    .transpose()?
+                    // zero-sized Type span is unit type
+                    .unwrap_or_else(|| Type::Unit))
+            })?;
 
-        let body = self.block()?;
-        Ok(Function {
-            name: ident_symbol,
-            parameters,
-            body,
-            return_type,
+            let body = p.block()?;
+            Ok(Function {
+                name: ident_symbol,
+                parameters,
+                body,
+                return_type,
+            })
+        })
+    }
+
+    pub fn type_definition(&mut self) -> CResult<Spanned<(SymbolId, Type)>> {
+        self.spanned(|p| {
+            p.expect(TokenKind::Type)?;
+            let alias = p.identifier()?;
+            p.expect(TokenKind::Assign)?;
+            let typ = p.r#type()?;
+            Ok((alias, typ))
         })
     }
 

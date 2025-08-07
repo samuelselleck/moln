@@ -5,7 +5,7 @@ use symbol_table::{SymbolTable, ValueInfo};
 use crate::{
     error::{CResult, CompilerError},
     parser::ast::{
-        Ast, BinaryOp, Block, Expression, ExpressionKind, Function, Statement, Type,
+        Ast, BinaryOp, Block, Expression, ExpressionKind, Function, RootStatement, Statement, Type,
         UnaryPostfixOp, UnaryPrefixOp, VariableDeclaration, Variant, VariantDefinition,
     },
     symbol_interning::SymbolId,
@@ -30,7 +30,16 @@ impl SemanticContext {
             statements: ast
                 .elems
                 .into_iter()
-                .map(|e| Statement::Expression(e.map(ExpressionKind::FunctionDefinition)))
+                .map(|e| {
+                    Statement::Expression(e.map(|r| match r {
+                        RootStatement::Function(function) => {
+                            ExpressionKind::FunctionDefinition(function)
+                        }
+                        RootStatement::Type(symbol_id, typ) => {
+                            ExpressionKind::TypeDefinition(symbol_id, typ)
+                        }
+                    }))
+                })
                 .collect::<Vec<_>>(),
             unit_return: true,
         };
@@ -52,8 +61,9 @@ impl SemanticContext {
                     ExpressionKind::FunctionDefinition(func) => {
                         self.collect_function(func)?;
                     }
-                    // TODO structs, enums, type aliases
-                    // NOTE: the below types don't need to be pre-resolved
+                    ExpressionKind::TypeDefinition(symbol_id, typ) => {
+                        self.table.define_type(*symbol_id, typ.clone())?;
+                    }
                     ExpressionKind::Variable(_)
                     | ExpressionKind::Float(_)
                     | ExpressionKind::Int(_)
@@ -134,9 +144,19 @@ impl SemanticContext {
             ExpressionKind::Int(_) => Ok(Type::i64()),
             ExpressionKind::String(_) => Ok(Type::str()),
             ExpressionKind::Boolean(_) => Ok(Type::bool()),
+            ExpressionKind::TypeDefinition(_, _) => {
+                // NOTE: this was already handled during collection phase - no further processing needed
+                Ok(Type::Unit)
+            }
             ExpressionKind::FunctionDefinition(function) => {
                 let body_type = self.scope(|scope| {
                     for param in &*function.parameters {
+                        if let Type::Named(symbol_id) = &*param.r#type {
+                            scope.table.resolve_type(&symbol_id).ok_or_else(|| {
+                                CompilerError::new(format!("undefined type {}", symbol_id))
+                                    .annotation(param.r#type.span, "not defined in this scope")
+                            })?;
+                        }
                         scope.table.define_value(
                             *param.identifier,
                             ValueInfo {

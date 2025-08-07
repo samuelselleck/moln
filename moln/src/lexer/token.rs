@@ -65,6 +65,7 @@ pub enum TokenKind {
     SemiColon,
     Let,
     Tick,
+    Type,
 
     #[default]
     Unknown,
@@ -122,6 +123,7 @@ impl Display for TokenKind {
             TokenKind::Let => "let",
             TokenKind::True => "true",
             TokenKind::False => "false",
+            TokenKind::Type => "type",
             TokenKind::Tick => "'",
         };
         write!(f, "{}", s)

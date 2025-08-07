@@ -1,4 +1,6 @@
-fn test_func(namespace: MyStruct, takeout: u32) -> i64 {
+type MyStruct = '{}
+
+fn test_func(namespace: MyStruct, takeout: i64) -> i64 {
     let something: i64 = 5;
 	func_is_valid(5 + 23, true || false && false != !(3 >= 4));
 	{
